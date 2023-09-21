@@ -1,0 +1,24 @@
+- name: Install and configure haproxy
+  hosts: haproxy
+  become: true
+  gather_facts: false
+  ignore_unreachable: false
+
+  tasks:
+    - name: Install haproxy service
+      ansible.builtin.apt: 
+        name: haproxy
+        state: present
+        update_cache: true
+
+    - name: haproxy config update
+      ansible.builtin.template:
+        src: haproxy.cfg.j2
+        dest: /etc/haproxy/haproxy.cfg
+
+    - name: Restart haproxy
+      ansible.builtin.service:
+        name: haproxy
+        daemon_reload: true
+        enabled: true
+        state: restarted

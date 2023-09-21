@@ -1,0 +1,22 @@
+
+
+all:
+  children:
+    haproxy:
+      hosts:
+        haproxy01:
+    masters:
+      hosts:
+        master[01:03]:
+    workers:
+      hosts:
+        worker[01:02]:
+
+    cluster:
+      children:
+        masters:
+        workers:
+  
+  vars:
+    ansible_user: ysemyenkov
+    ansible_ssh_common_args: '-o StrictHostKeyChecking=no'

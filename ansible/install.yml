@@ -1,0 +1,143 @@
+- name: Prepare
+  hosts: cluster
+  become: true
+  gather_facts: false
+  ignore_unreachable: false
+
+  tasks:
+    # disable swap
+    - name: Make the Swap inactive
+      ansible.builtin.command: 
+        cmd: swapoff -a
+
+    - name: Remove Swap entry from /etc/fstab.
+      ansible.builtin.lineinfile:
+       dest: /etc/fstab
+       regexp: swap
+       state: absent
+    
+    # install CRI
+    - name: Ensure dependencies are installed.
+      ansible.builtin.apt:
+        name:
+          - apt-transport-https
+          - ca-certificates
+          - curl
+          - gnupg-agent
+          - software-properties-common
+        state: present
+
+    - name: Add an apt signing key for Docker
+      ansible.builtin.apt_key:
+        url: https://download.docker.com/linux/ubuntu/gpg
+        state: present
+
+    - name: Add apt repository for stable version
+      ansible.builtin.apt_repository:
+        repo: "deb [arch=amd64] https://download.docker.com/linux/ubuntu focal stable"
+        state: present
+
+    - name: Update cache
+      ansible.builtin.apt:
+        update_cache: true
+
+    - name: Install docker and its dependecies
+      ansible.builtin.apt:
+        name: "{{ item }}"
+        state: present
+      with_items:
+        - containerd.io
+
+    - name: Enable cri plugin
+      ansible.builtin.lineinfile:
+        path: /etc/containerd/config.toml
+        regexp: '^disabled_plugins'
+        line: '#disabled_plugins = ["cri"]'
+      notify:
+        - Restart containerd
+
+    # install kubeadm, kubectl, kubelet
+
+    - name: Add an apt signing key for Kubernetes
+      ansible.builtin.apt_key:
+        url: https://pkgs.k8s.io/core:/stable:/v1.28/deb/Release.key
+        state: present
+    
+    - name: Adding apt repository for Kubernetes
+      ansible.builtin.apt_repository:
+        repo: "deb https://pkgs.k8s.io/core:/stable:/v1.28/deb/ /"
+        state: present
+        filename: kubernetes
+
+    - name: Update cache
+      ansible.builtin.apt:
+        update_cache: true
+
+    - name: Install Kubernetes on master
+      ansible.builtin.apt: 
+        name: "{{ item }}"
+        state: present
+      with_items:
+          - kubelet=1.28.2-1.1 
+          - kubeadm=1.28.2-1.1
+          - kubectl=1.28.2-1.1
+      when: '"master" in inventory_hostname'
+      notify:
+        - Restart kubelet
+
+    - name: Install Kubernetes on worker
+      ansible.builtin.apt: 
+        name: "{{ item }}"
+        state: present
+        update_cache: true
+      with_items:
+          - kubelet=1.28.2-1.1
+          - kubeadm=1.28.2-1.1
+      notify:
+        - Restart kubelet
+      when: '"worker" in inventory_hostname'
+
+    - name: Hold packages versions
+      ansible.builtin.blockinfile:
+        path: /etc/apt/apt.conf.d/50unattended-upgrades
+        marker: "// {mark} ANSIBLE MANAGED BLOCK"
+        insertafter: "Unattended-Upgrade::Package-Blacklist {"
+        block: |
+          // Workaround for indentation
+              "kubelet";
+              "kubeadm";
+              "kubectl";
+
+    # additional os configuration
+    - name: Copy sysctl template
+      ansible.builtin.template:
+        src: k8s.conf.j2
+        dest: /etc/sysctl.d/k8s.conf
+
+    - name: Copy modprobe template
+      ansible.builtin.template:
+        src: modprobe.conf.j2
+        dest: /etc/modules-load.d/k8s.conf
+
+    - name: Run some commands
+      ansible.builtin.shell: 
+        cmd: "{{ item }}"
+      with_items:
+        - modprobe overlay
+        - modprobe br_netfilter
+        - sysctl --system
+
+  handlers:
+    - name: Restart kubelet
+      ansible.builtin.service:
+        name: kubelet
+        daemon_reload: yes
+        enabled: yes
+        state: restarted
+
+    - name: Restart containerd
+      ansible.builtin.service:
+        name: containerd
+        daemon_reload: yes
+        enabled: yes
+        state: restarted
